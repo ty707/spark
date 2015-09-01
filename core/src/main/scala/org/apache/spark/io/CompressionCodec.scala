@@ -21,7 +21,7 @@ import java.io.{IOException, InputStream, OutputStream}
 
 import com.ning.compress.lzf.{LZFInputStream, LZFOutputStream}
 import net.jpountz.lz4.{LZ4BlockInputStream, LZ4BlockOutputStream}
-import org.xerial.snappy.{Snappy, SnappyInputStream, SnappyOutputStream}
+import org.xerial.snappy._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.annotation.DeveloperApi
@@ -50,7 +50,8 @@ private[spark] object CompressionCodec {
   private val shortCompressionCodecNames = Map(
     "lz4" -> classOf[LZ4CompressionCodec].getName,
     "lzf" -> classOf[LZFCompressionCodec].getName,
-    "snappy" -> classOf[SnappyCompressionCodec].getName)
+    "snappy" -> classOf[SnappyCompressionCodec].getName,
+    "sz" -> classOf[SnappyFramingCompressionCodec].getName)
 
   def getCodecName(conf: SparkConf): String = {
     conf.get(configKey, DEFAULT_COMPRESSION_CODEC)
@@ -202,4 +203,31 @@ private final class SnappyOutputStreamWrapper(os: SnappyOutputStream) extends Ou
       os.close()
     }
   }
+}
+
+/**
+ * :: DeveloperApi ::
+ * Snappy (Framing Format) implementation of [[org.apache.spark.io.CompressionCodec]].
+ * Block size can be configured by `spark.io.compression.snappy.blockSize`.
+ *
+ * For details on the framing format, see
+ * https://github.com/google/snappy/blob/master/framing_format.txt
+ */
+@DeveloperApi
+class SnappyFramingCompressionCodec(conf: SparkConf) extends CompressionCodec{
+
+  try {
+    Snappy.getNativeLibraryVersion
+  } catch {
+    case e: Error => throw new IllegalArgumentException
+  }
+
+  override def compressedOutputStream(s: OutputStream): OutputStream = {
+    val blockSize = conf.getSizeAsBytes("spark.io.compression.snappy.blockSize",
+      SnappyFramedOutputStream.DEFAULT_BLOCK_SIZE).toInt
+    new SnappyFramedOutputStream(s, blockSize,
+      SnappyFramedOutputStream.DEFAULT_MIN_COMPRESSION_RATIO)
+  }
+
+  override def compressedInputStream(s: InputStream): InputStream = new SnappyFramedInputStream(s)
 }
